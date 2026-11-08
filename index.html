@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mais CRM</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+:root{--bg:#f6f5f2;--surface:#fff;--border:#e4e0d8;--text:#1f1b16;--muted:#8a8275;--accent:#b5752e;--danger:#b0493f;--ok:#4a7c4e;}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,sans-serif;}
+header{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--border);z-index:5;}
+.htop{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 6px;}
+.htop h1{font-size:17px;margin:0;}
+.who{font-size:12px;color:var(--muted);}
+nav{display:flex;gap:4px;padding:0 10px 10px;overflow-x:auto;}
+nav button{border:1px solid var(--border);background:var(--surface);color:var(--text);padding:8px 12px;border-radius:20px;font-size:13px;cursor:pointer;white-space:nowrap;}
+nav button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+main{max-width:760px;margin:0 auto;padding:14px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px;}
+.card h2{font-size:14px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;font-family:inherit;}
+label{font-size:11px;color:var(--muted);display:block;margin-bottom:3px;}
+.field{margin-bottom:8px;}
+button.primary{background:var(--accent);color:#fff;border:none;padding:10px 14px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;width:100%;margin-top:4px;}
+button.ghost{background:none;border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:8px;font-size:12px;cursor:pointer;}
+.row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;}
+.row:last-child{border-bottom:none;}
+.row .name{font-weight:600;font-size:14px;}
+.row .meta{font-size:12px;color:var(--muted);margin-top:2px;}
+.amt{font-weight:700;font-size:14px;}
+.amt.in{color:var(--ok);} .amt.out{color:var(--danger);}
+.del{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;}
+.empty{color:var(--muted);font-size:13px;text-align:center;padding:16px 0;}
+.summary{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+.sumbox{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px;}
+.sumbox .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;}
+.sumbox .val{font-size:20px;font-weight:700;margin-top:4px;}
+#loginScreen{max-width:340px;margin:60px auto;padding:0 16px;}
+.err{color:var(--danger);font-size:13px;margin-top:8px;}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--bg);border:1px solid var(--border);color:var(--muted);margin-top:4px;}
+.editbox{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px;margin-top:8px;}
+.backlink{font-size:13px;color:var(--accent);cursor:pointer;margin-bottom:10px;display:inline-block;}
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="card">
+    <h2>Вход — Mais CRM</h2>
+    <form id="loginForm">
+      <div class="field"><label>Email</label><input name="email" type="email" required></div>
+      <div class="field"><label>Пароль</label><input name="password" type="password" required></div>
+      <button class="primary" type="submit">Войти</button>
+      <div class="err" id="loginErr"></div>
+    </form>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+<header>
+  <div class="htop">
+    <div><h1>Mais CRM</h1><div class="who" id="whoami"></div></div>
+    <button id="logoutBtn" style="border:none;background:none;color:var(--muted);font-size:13px;cursor:pointer;">Выйти</button>
+  </div>
+  <nav id="tabs"></nav>
+</header>
+<main id="main"></main>
+</div>
+
+<script>
+// ЗАПОЛНИТЕ после создания проекта в Supabase (Project Settings → API):
+const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let me = null;
+const state = { clients:[], orders:[], tailors:[], transactions:[], profiles:{} };
+let currentTab='clients';
+let selectedClientId=null;
+let editingOrderId=null;
+
+function fmt(n){ return Number(n||0).toLocaleString('ru-RU'); }
+function today(){ return new Date().toISOString().slice(0,10); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+const ROLE_LABELS={admin:'Админ',director:'Директор',owner:'Владелец',teacher:'Учитель',accountant:'Бухгалтер'};
+const TAB_LABELS={clients:'Клиенты',orders:'Заявки',tailors:'Портные',finance:'Финансы',reports:'Отчёты'};
+const TAB_ACCESS={
+  admin:    ['clients','orders','tailors','finance','reports'],
+  owner:    ['clients','orders','tailors','finance','reports'],
+  director: ['clients','finance','reports'],
+  teacher:  ['clients','finance'],
+  accountant:['finance','reports'],
+};
+const ORDER_STATUSES=[
+  ['deposit','Предоплата получена'],
+  ['material','Материал получен'],
+  ['cut','Материал раскроен'],
+  ['tailor','У портного'],
+  ['finishing','Глажка/упаковка'],
+  ['completed','Выдано клиенту'],
+  ['cancel','Отменено']
+];
+function statusLabel(s){ const f=ORDER_STATUSES.find(x=>x[0]===s); return f?f[1]:s; }
+
+// ---------- AUTH ----------
+document.getElementById('loginForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const f = new FormData(e.target);
+  document.getElementById('loginErr').textContent='';
+  const { error } = await sb.auth.signInWithPassword({ email:f.get('email'), password:f.get('password') });
+  if(error){ document.getElementById('loginErr').textContent = 'Неверный email или пароль'; return; }
+  await boot();
+});
+document.getElementById('logoutBtn').addEventListener('click', async ()=>{ await sb.auth.signOut(); location.reload(); });
+
+async function boot(){
+  const { data:{ user } } = await sb.auth.getUser();
+  if(!user){ return; }
+  const { data:profile, error } = await sb.from('profiles').select('*').eq('id', user.id).single();
+  if(error || !profile){
+    document.getElementById('loginErr').textContent = 'У вас нет профиля сотрудника. Обратитесь к админу.';
+    return;
+  }
+  me = profile;
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('whoami').textContent = `${me.full_name} · ${ROLE_LABELS[me.role]||me.role}`;
+  const allowed = TAB_ACCESS[me.role] || [];
+  currentTab = allowed[0] || 'finance';
+  document.getElementById('tabs').innerHTML = allowed.map((t,i)=>
+    `<button data-tab="${t}" class="${i===0?'active':''}">${TAB_LABELS[t]}</button>`).join('');
+  loadAll();
+}
+
+// ---------- DATA ----------
+async function loadAll(){
+  const [profiles, clients, tailors, orders, transactions] = await Promise.all([
+    sb.from('profiles').select('*'),
+    sb.from('clients').select('*').order('created_at',{ascending:false}),
+    sb.from('tailors').select('*').order('created_at',{ascending:false}),
+    sb.from('orders').select('*').order('created_at',{ascending:false}),
+    sb.from('transactions').select('*').order('created_at',{ascending:false}),
+  ]);
+  (profiles.data||[]).forEach(p=> state.profiles[p.id]=p);
+  state.clients = clients.data||[];
+  state.tailors = tailors.data||[];
+  state.orders = orders.data||[];
+  state.transactions = transactions.data||[];
+  render();
+}
+
+// ---------- TABS ----------
+document.getElementById('tabs').addEventListener('click', e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  currentTab=b.dataset.tab; selectedClientId=null; editingOrderId=null;
+  document.querySelectorAll('#tabs button').forEach(x=>x.classList.toggle('active', x===b));
+  render();
+});
+
+function render(){
+  const main=document.getElementById('main');
+  if(currentTab==='clients') main.innerHTML = selectedClientId ? renderClientDetail() : renderClients();
+  else if(currentTab==='orders') main.innerHTML=renderOrders();
+  else if(currentTab==='tailors') main.innerHTML=renderTailors();
+  else if(currentTab==='finance') main.innerHTML=renderFinance();
+  else main.innerHTML=renderReports();
+  bindEvents();
+}
+
+function renderClients(){
+  return `
+  <div class="card"><h2>Новый клиент</h2>
+    <form id="clientForm">
+      <div class="field"><label>Имя / компания</label><input name="name" required></div>
+      <div class="grid">
+        <div class="field"><label>Телефон</label><input name="phone"></div>
+        <div class="field"><label>Компания</label><input name="company"></div>
+      </div>
+      <div class="field"><label>Заметка</label><textarea name="note"></textarea></div>
+      <button class="primary" type="submit">Добавить</button>
+    </form>
+  </div>
+  <div class="card"><h2>Клиенты (${state.clients.length})</h2>
+    ${state.clients.length? state.clients.map(c=>`
+      <div class="row" data-open-client="${c.id}"><div class="main">
+        <div class="name">${esc(c.name)}</div>
+        <div class="meta">${esc(c.phone||'')}${c.company?' · '+esc(c.company):''}</div>
+      </div><button class="del" data-del="clients" data-id="${c.id}">✕</button></div>`).join('') : '<div class="empty">Пока нет клиентов</div>'}
+  </div>`;
+}
+
+function renderClientDetail(){
+  const c = state.clients.find(x=>x.id===selectedClientId);
+  if(!c){ selectedClientId=null; return renderClients(); }
+  const orders = state.orders.filter(o=>o.client_id===c.id).sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||''));
+  const received = orders.reduce((s,o)=> s+Number(o.prepayment||0)+Number(o.final_payment||0), 0);
+  const total = orders.reduce((s,o)=> s+Number(o.amount||0), 0);
+  return `
+  <span class="backlink" data-back-clients="1">← К списку клиентов</span>
+  <div class="card">
+    <h2>${esc(c.name)}</h2>
+    <div class="meta">${esc(c.phone||'')}${c.company?' · '+esc(c.company):''}</div>
+    ${c.note?`<div class="meta">${esc(c.note)}</div>`:''}
+  </div>
+  <div class="summary">
+    <div class="sumbox"><div class="lbl">Получено</div><div class="val" style="color:var(--ok)">${fmt(received)}</div></div>
+    <div class="sumbox"><div class="lbl">Сумма заявок</div><div class="val">${fmt(total)}</div></div>
+  </div>
+  <div class="card"><h2>История заявок (${orders.length})</h2>
+    ${orders.length? orders.map(o=>`
+      <div class="row" style="cursor:default"><div class="main">
+        <div class="name">${esc(o.item)} ${o.qty?('× '+o.qty):''}</div>
+        <div class="meta">${o.order_date||''} · предоплата ${fmt(o.prepayment)} · доплата ${fmt(o.final_payment)}</div>
+        <span class="badge">${statusLabel(o.status)}</span>
+      </div><div class="amt">${fmt(o.amount)}</div></div>`).join('') : '<div class="empty">Пока нет заявок</div>'}
+  </div>`;
+}
+
+function renderOrders(){
+  const clientOpts = state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const tailorOpts = state.tailors.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('');
+  return `
+  <div class="card"><h2>Новая заявка</h2>
+    <form id="orderForm">
+      <div class="field"><label>Клиент</label><select name="client_id" required><option value="">— выбрать —</option>${clientOpts}</select></div>
+      <div class="field"><label>Портной</label><select name="tailor_id"><option value="">— не назначен —</option>${tailorOpts}</select></div>
+      <div class="field"><label>Товар / услуга</label><input name="item" required></div>
+      <div class="grid">
+        <div class="field"><label>Кол-во</label><input name="qty" type="number" min="1" value="1"></div>
+        <div class="field"><label>Полная сумма, сум</label><input name="amount" type="number" min="0"></div>
+      </div>
+      <div class="field"><label>Предоплата, сум (этап 1)</label><input name="prepayment" type="number" min="0" value="0"></div>
+      <div class="field"><label>Дата</label><input name="order_date" type="date" value="${today()}"></div>
+      <div class="field"><label>Заметка</label><textarea name="note"></textarea></div>
+      <button class="primary" type="submit">Открыть заявку</button>
+    </form>
+  </div>
+  <div class="card"><h2>Заявки (${state.orders.length})</h2>
+    ${state.orders.length? state.orders.map(o=>{
+      const client = state.clients.find(c=>c.id===o.client_id);
+      const tailor = state.tailors.find(t=>t.id===o.tailor_id);
+      const editing = editingOrderId===o.id;
+      return `<div class="card" style="padding:10px 0;border:none;margin:0">
+      <div class="row" style="border-bottom:1px solid var(--border)"><div class="main">
+        <div class="name">${esc(o.item)} ${o.qty?('× '+o.qty):''}</div>
+        <div class="meta">${client?esc(client.name):'—'}${tailor?' · портной: '+esc(tailor.name):''} · ${o.order_date||''}</div>
+        <span class="badge">${statusLabel(o.status)}</span>
+        <div class="meta">предоплата ${fmt(o.prepayment)} · доплата ${fmt(o.final_payment)}</div>
+      </div><div style="text-align:right">
+        <div class="amt">${fmt(o.amount)}</div>
+        <button class="ghost" data-edit-order="${o.id}">${editing?'Закрыть':'Изменить'}</button>
+        <button class="del" data-del="orders" data-id="${o.id}">✕</button>
+      </div></div>
+      ${editing?`
+        <div class="editbox">
+          <form data-save-order="${o.id}">
+            <div class="field"><label>Этап</label>
+              <select name="status">${ORDER_STATUSES.map(s=>`<option value="${s[0]}" ${s[0]===o.status?'selected':''}>${s[1]}</option>`).join('')}</select>
+            </div>
+            <div class="field"><label>Доплата при выдаче, сум (этап 6)</label><input name="final_payment" type="number" min="0" value="${o.final_payment||0}"></div>
+            <button class="primary" type="submit">Сохранить</button>
+          </form>
+        </div>`:''}
+      </div>`;
+    }).join('') : '<div class="empty">Пока нет заявок</div>'}
+  </div>`;
+}
+
+function renderTailors(){
+  return `
+  <div class="card"><h2>Новый портной</h2>
+    <form id="tailorForm">
+      <div class="field"><label>Имя</label><input name="name" required></div>
+      <div class="field"><label>Телефон</label><input name="phone"></div>
+      <div class="field"><label>Заметка</label><textarea name="note"></textarea></div>
+      <button class="primary" type="submit">Добавить</button>
+    </form>
+  </div>
+  <div class="card"><h2>Портные (${state.tailors.length})</h2>
+    ${state.tailors.length? state.tailors.map(t=>`
+      <div class="row" style="cursor:default"><div class="main">
+        <div class="name">${esc(t.name)}</div>
+        <div class="meta">${esc(t.phone||'')}</div>
+      </div><button class="del" data-del="tailors" data-id="${t.id}">✕</button></div>`).join('') : '<div class="empty">Пока нет портных</div>'}
+  </div>`;
+}
+
+function renderFinance(){
+  return `
+  <div class="card"><h2>Новая операция</h2>
+    <form id="txForm">
+      <div class="grid">
+        <div class="field"><label>Тип</label><select name="type"><option value="income">Приход</option><option value="expense">Расход</option></select></div>
+        <div class="field"><label>Сумма, сум</label><input name="amount" type="number" min="0" required></div>
+      </div>
+      <div class="grid">
+        <div class="field"><label>Категория</label><input name="category"></div>
+        <div class="field"><label>Дата</label><input name="tx_date" type="date" value="${today()}"></div>
+      </div>
+      <div class="field"><label>Описание</label><input name="description"></div>
+      <button class="primary" type="submit">Добавить</button>
+    </form>
+  </div>
+  <div class="card"><h2>Операции (${state.transactions.length})</h2>
+    ${state.transactions.length? state.transactions.map(t=>`
+      <div class="row" style="cursor:default"><div class="main">
+        <div class="name">${esc(t.category||(t.type==='income'?'Приход':'Расход'))}</div>
+        <div class="meta">${t.tx_date||''}${t.description?' · '+esc(t.description):''}</div>
+      </div><div style="text-align:right"><div class="amt ${t.type==='income'?'in':'out'}">${t.type==='income'?'+':'−'}${fmt(t.amount)}</div>
+      <button class="del" data-del="transactions" data-id="${t.id}">✕</button></div></div>`).join('') : '<div class="empty">Пока нет операций</div>'}
+  </div>`;
+}
+
+function renderReports(){
+  const income = state.transactions.filter(t=>t.type==='income').reduce((s,t)=>s+Number(t.amount||0),0);
+  const expense = state.transactions.filter(t=>t.type==='expense').reduce((s,t)=>s+Number(t.amount||0),0);
+  const ordersByStatus={}; ORDER_STATUSES.forEach(s=>ordersByStatus[s[0]]=0);
+  state.orders.forEach(o=> ordersByStatus[o.status||'deposit']=(ordersByStatus[o.status||'deposit']||0)+1);
+  const receivedFromOrders = state.orders.reduce((s,o)=> s+Number(o.prepayment||0)+Number(o.final_payment||0), 0);
+  return `
+  <div class="summary">
+    <div class="sumbox"><div class="lbl">Приход (финансы)</div><div class="val" style="color:var(--ok)">${fmt(income)}</div></div>
+    <div class="sumbox"><div class="lbl">Расход</div><div class="val" style="color:var(--danger)">${fmt(expense)}</div></div>
+    <div class="sumbox"><div class="lbl">Прибыль</div><div class="val">${fmt(income-expense)}</div></div>
+    <div class="sumbox"><div class="lbl">Получено по заявкам</div><div class="val">${fmt(receivedFromOrders)}</div></div>
+  </div>
+  <div class="card"><h2>Заявки по этапам</h2>
+    ${ORDER_STATUSES.map(s=>`<div class="row" style="cursor:default"><div class="main">${s[1]}</div><div class="amt">${ordersByStatus[s[0]]||0}</div></div>`).join('')}
+  </div>
+  <div class="card"><h2>Итого</h2>
+    <div class="row" style="cursor:default"><div class="main">Клиентов</div><div class="amt">${state.clients.length}</div></div>
+    <div class="row" style="cursor:default"><div class="main">Портных</div><div class="amt">${state.tailors.length}</div></div>
+    <div class="row" style="cursor:default"><div class="main">Операций</div><div class="amt">${state.transactions.length}</div></div>
+  </div>`;
+}
+
+function bindEvents(){
+  const cf=document.getElementById('clientForm');
+  if(cf) cf.addEventListener('submit', async e=>{
+    e.preventDefault(); const f=new FormData(cf);
+    await sb.from('clients').insert({ name:f.get('name'), phone:f.get('phone')||null, company:f.get('company')||null, note:f.get('note')||null, created_by: me.id });
+    await loadAll(); currentTab='clients'; render();
+  });
+  const of=document.getElementById('orderForm');
+  if(of) of.addEventListener('submit', async e=>{
+    e.preventDefault(); const f=new FormData(of);
+    await sb.from('orders').insert({
+      client_id:f.get('client_id')||null, tailor_id:f.get('tailor_id')||null, item:f.get('item'),
+      qty:Number(f.get('qty')||1), amount:Number(f.get('amount')||0), prepayment:Number(f.get('prepayment')||0),
+      order_date:f.get('order_date'), status:'deposit', note:f.get('note')||null, created_by: me.id
+    });
+    await loadAll(); currentTab='orders'; render();
+  });
+  const tlf=document.getElementById('tailorForm');
+  if(tlf) tlf.addEventListener('submit', async e=>{
+    e.preventDefault(); const f=new FormData(tlf);
+    await sb.from('tailors').insert({ name:f.get('name'), phone:f.get('phone')||null, note:f.get('note')||null });
+    await loadAll(); currentTab='tailors'; render();
+  });
+  const tf=document.getElementById('txForm');
+  if(tf) tf.addEventListener('submit', async e=>{
+    e.preventDefault(); const f=new FormData(tf);
+    await sb.from('transactions').insert({ type:f.get('type'), amount:Number(f.get('amount')||0), category:f.get('category')||null, description:f.get('description')||null, tx_date:f.get('tx_date'), created_by: me.id });
+    await loadAll(); currentTab='finance'; render();
+  });
+  document.querySelectorAll('[data-edit-order]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      editingOrderId = editingOrderId===b.dataset.editOrder ? null : b.dataset.editOrder;
+      render();
+    });
+  });
+  document.querySelectorAll('[data-save-order]').forEach(f=>{
+    f.addEventListener('submit', async e=>{
+      e.preventDefault(); const fd=new FormData(f);
+      await sb.from('orders').update({ status:fd.get('status'), final_payment:Number(fd.get('final_payment')||0) }).eq('id', f.dataset.saveOrder);
+      editingOrderId=null; await loadAll(); currentTab='orders'; render();
+    });
+  });
+  document.querySelectorAll('[data-open-client]').forEach(row=>{
+    row.addEventListener('click', (e)=>{
+      if(e.target.closest('[data-del]')) return;
+      selectedClientId = row.dataset.openClient; render();
+    });
+  });
+  const back=document.querySelector('[data-back-clients]');
+  if(back) back.addEventListener('click', ()=>{ selectedClientId=null; render(); });
+  document.querySelectorAll('[data-del]').forEach(b=>{
+    b.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      if(!confirm('Удалить запись?')) return;
+      await sb.from(b.dataset.del).delete().eq('id', b.dataset.id);
+      await loadAll();
+    });
+  });
+}
+
+sb.auth.getSession().then(({data})=>{ if(data.session) boot(); });
+</script>
+</body>
+</html>
